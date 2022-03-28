@@ -28,7 +28,7 @@ var opt struct {
 }
 
 var cmd = &cobra.Command{
-	Use:  "aws-lambda-storage-clean function-name-prefix",
+	Use:  "lambda-clean function-name-prefix",
 	Args: cobra.ExactArgs(1),
 	Run:  run,
 }
