@@ -1,0 +1,56 @@
+env:
+  - GO111MODULE=on
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: .
+    binary: lambda-clean
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - name_template: '{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+    replacements:
+      darwin: Darwin
+      linux: Linux
+      windows: Windows
+      386: i386
+      amd64: x86_64
+      arm64: aarch64
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - none*
+
+checksum:
+  name_template: '{{ .ProjectName }}_checksums.txt'
+
+release:
+  prerelease: auto
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^chore:'
+      - '^ci:'
+      - '^docs:'
+      - '^refactor:'
+      - '^style:'
+      - '^test:'
+      - Merge pull request
+      - Merge branch
