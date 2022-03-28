@@ -9,7 +9,7 @@ AWS Lambda function version cleaner.
 ### Linux and Mac
 
 ```shell
-curl -L https://github.com/rxnew/lambda-clean/releases/latest/download/awscurl-$(uname -s)-$(uname -m).tar.gz | tar -zx
+curl -L https://github.com/rxnew/lambda-clean/releases/latest/download/lambda-clean-$(uname -s)-$(uname -m).tar.gz | tar -zx
 ```
 
 ## Quick Start
