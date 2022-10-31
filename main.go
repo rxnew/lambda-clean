@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/spf13/cobra"
 )
@@ -43,7 +44,11 @@ func run(cmd *cobra.Command, args []string) {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
 
-	cfg, err := config.LoadDefaultConfig(ctx)
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
+		options.TokenProvider = func() (string, error) {
+			return stscreds.StdinTokenProvider()
+		}
+	}))
 	if err != nil {
 		log.Fatalf("failed to load configuration: %v", err)
 	}
