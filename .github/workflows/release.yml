@@ -10,9 +10,6 @@ jobs:
     name: Go release
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      matrix:
-        go: [ '1.18' ]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
