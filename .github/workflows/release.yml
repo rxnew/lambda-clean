@@ -12,10 +12,10 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        go: [ '1.17' ]
+        go: [ '1.18' ]
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Bump version and push tag
         id: tag_version
@@ -25,18 +25,20 @@ jobs:
           release_branches: '.*'
 
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           ref: refs/tags/${{ steps.tag_version.outputs.new_tag }}
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v3
         with:
-          go-version: ${{ matrix.go }}
+          go-version-file: './go.mod'
+          cache: true
+          cache-dependency-path: './go.sum'
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v2
+        uses: goreleaser/goreleaser-action@v3
         with:
           version: latest
           args: release --rm-dist
