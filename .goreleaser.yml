@@ -24,7 +24,14 @@ builds:
       - arm64
 
 archives:
-  - name_template: '{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+  - name_template: >-
+      {{ .ProjectName }}-
+      {{- if eq .Os "linux" }}Linux
+      {{- else if eq .Os "darwin" }}Darwin
+      {{- else }}{{ .Os }}{{ end }}-
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else }}{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}{{ end }}
     format_overrides:
       - goos: windows
         formats: [ 'zip' ]
