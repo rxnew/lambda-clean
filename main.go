@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -24,9 +25,10 @@ func main() {
 }
 
 var opt struct {
-	Region    string
-	NumToKeep int
-	DryRun    bool
+	Region      string
+	NumToKeep   int
+	Concurrency int
+	DryRun      bool
 }
 
 var cmd = &cobra.Command{
@@ -38,6 +40,7 @@ var cmd = &cobra.Command{
 func init() {
 	cmd.Flags().StringVarP(&opt.Region, "region", "r", "", "AWS Region (default \"default\" from local configuration)")
 	cmd.Flags().IntVarP(&opt.NumToKeep, "num-to-keep", "n", 2, "Number of latest versions to keep. Older versions will be deleted.")
+	cmd.Flags().IntVarP(&opt.Concurrency, "concurrency", "c", 5, "Number of delete requests that can be performed concurrently.")
 	cmd.Flags().BoolVar(&opt.DryRun, "dry-run", false, "If this option is specified, the function version is not deleted.")
 }
 
@@ -58,18 +61,51 @@ func run(cmd *cobra.Command, args []string) {
 		cfg.Region = opt.Region
 	}
 
-	cli := lambda.NewFromConfig(cfg)
+	ch := make(chan func(), opt.Concurrency)
 
-	ch := listFunctions(ctx, cli, args[0])
+	for range opt.Concurrency {
+		go func() {
+			for f := range ch {
+				f()
+			}
+		}()
+	}
 
-	for {
-		fn, ok := <-ch
-		if !ok {
-			break
+	cli := lambda.NewFromConfig(cfg, func(options *lambda.Options) {
+		options.RetryMaxAttempts = 8
+		options.RetryMode = aws.RetryModeAdaptive
+	})
+
+	for fn := range listFunctions(ctx, cli, args[0]) {
+		vers := make([]string, 0, opt.NumToKeep+1)
+
+		var wg sync.WaitGroup
+
+		for ver := range listVersions(ctx, cli, fn) {
+			vers = append(vers, ver)
+
+			if len(vers) > opt.NumToKeep {
+				ver, vers = vers[0], vers[1:]
+
+				wg.Add(1)
+				ch <- func() {
+					defer wg.Done()
+					if !opt.DryRun {
+						deleteVersion(ctx, cli, fn, ver)
+					}
+					fmt.Printf("[DELETE] %s:%s\n", fn, ver)
+				}
+			}
 		}
 
-		cleanUpVersions(ctx, cli, fn, opt.NumToKeep, opt.DryRun)
+		wg.Wait()
+
+		for _, ver := range vers {
+			fmt.Printf("[KEEP]   %s:%s\n", fn, ver)
+		}
 	}
+
+	close(ch)
 }
 
 func listFunctions(ctx context.Context, cli *lambda.Client, prefix string) <-chan string {
@@ -105,58 +141,51 @@ func listFunctions(ctx context.Context, cli *lambda.Client, prefix string) <-cha
 	return ch
 }
 
-func cleanUpVersions(ctx context.Context, cli *lambda.Client, functionName string, numToKeep int, dryRun bool) {
-	var (
-		versions []string
-		marker   *string
-	)
+func listVersions(ctx context.Context, cli *lambda.Client, functionName string) <-chan string {
+	ch := make(chan string)
 
-	for {
-		lo, err := cli.ListVersionsByFunction(ctx, &lambda.ListVersionsByFunctionInput{
-			FunctionName: aws.String(functionName),
-			Marker:       marker,
-		})
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return
-		}
-		if err != nil {
-			log.Fatalf("failed to list Lambda function versions: %v", err)
-		}
+	go func() {
+		defer close(ch)
 
-		for _, fv := range lo.Versions {
-			if !strings.HasPrefix(*fv.Version, "$") {
-				versions = append(versions, *fv.Version)
+		var marker *string
+
+		for {
+			lo, err := cli.ListVersionsByFunction(ctx, &lambda.ListVersionsByFunctionInput{
+				FunctionName: aws.String(functionName),
+				Marker:       marker,
+			})
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return
 			}
-		}
+			if err != nil {
+				log.Fatalf("failed to list Lambda function versions: %v", err)
+			}
 
-		if len(versions) > numToKeep {
-			for _, fv := range versions[:len(versions)-numToKeep] {
-				if !dryRun {
-					_, err := cli.DeleteFunction(ctx, &lambda.DeleteFunctionInput{
-						FunctionName: aws.String(functionName),
-						Qualifier:    aws.String(fv),
-					})
-					if errors.Is(ctx.Err(), context.Canceled) {
-						return
-					}
-					if err != nil {
-						log.Fatalf("failed to delete Lambda function: %v", err)
-					}
+			for _, fv := range lo.Versions {
+				if !strings.HasPrefix(*fv.Version, "$") {
+					ch <- *fv.Version
 				}
-
-				fmt.Printf("[DELETE] %s:%s\n", functionName, fv)
 			}
 
-			versions = versions[len(versions)-numToKeep:]
+			if lo.NextMarker == nil {
+				break
+			}
+			marker = lo.NextMarker
 		}
+	}()
 
-		if lo.NextMarker == nil {
-			break
-		}
-		marker = lo.NextMarker
+	return ch
+}
+
+func deleteVersion(ctx context.Context, cli *lambda.Client, functionName, version string) {
+	_, err := cli.DeleteFunction(ctx, &lambda.DeleteFunctionInput{
+		FunctionName: aws.String(functionName),
+		Qualifier:    aws.String(version),
+	})
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return
 	}
-
-	for _, fv := range versions {
-		fmt.Printf("[KEEP]   %s:%s\n", functionName, fv)
+	if err != nil {
+		log.Fatalf("failed to delete Lambda function: %v", err)
 	}
 }
