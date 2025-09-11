@@ -28,9 +28,9 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
-          go-version-file: './go.mod'
+          go-version: 'stable'
           cache: true
           cache-dependency-path: './go.sum'
 
