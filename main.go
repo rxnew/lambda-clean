@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -81,7 +82,7 @@ func listFunctions(ctx context.Context, cli *lambda.Client, prefix string) <-cha
 
 		for {
 			out, err := cli.ListFunctions(ctx, &lambda.ListFunctionsInput{Marker: marker})
-			if ctx.Err() == context.Canceled {
+			if errors.Is(ctx.Err(), context.Canceled) {
 				return
 			}
 			if err != nil {
@@ -115,7 +116,7 @@ func cleanUpVersions(ctx context.Context, cli *lambda.Client, functionName strin
 			FunctionName: aws.String(functionName),
 			Marker:       marker,
 		})
-		if ctx.Err() == context.Canceled {
+		if errors.Is(ctx.Err(), context.Canceled) {
 			return
 		}
 		if err != nil {
@@ -135,7 +136,7 @@ func cleanUpVersions(ctx context.Context, cli *lambda.Client, functionName strin
 						FunctionName: aws.String(functionName),
 						Qualifier:    aws.String(fv),
 					})
-					if ctx.Err() == context.Canceled {
+					if errors.Is(ctx.Err(), context.Canceled) {
 						return
 					}
 					if err != nil {
