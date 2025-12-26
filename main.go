@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +27,7 @@ func main() {
 
 var opt struct {
 	Region      string
+	Stack       string
 	NumToKeep   int
 	Concurrency int
 	DryRun      bool
@@ -39,6 +41,7 @@ var cmd = &cobra.Command{
 
 func init() {
 	cmd.Flags().StringVarP(&opt.Region, "region", "r", "", "AWS Region (default \"default\" from local configuration)")
+	cmd.Flags().StringVarP(&opt.Stack, "stack", "s", "", "Name or ID of the CloudFormation stack to which a function belongs.")
 	cmd.Flags().IntVarP(&opt.NumToKeep, "num-to-keep", "n", 2, "Number of latest versions to keep. Older versions will be deleted.")
 	cmd.Flags().IntVarP(&opt.Concurrency, "concurrency", "c", 5, "Number of delete requests that can be performed concurrently.")
 	cmd.Flags().BoolVar(&opt.DryRun, "dry-run", false, "If this option is specified, the function version is not deleted.")
@@ -60,6 +63,8 @@ func run(cmd *cobra.Command, args []string) {
 	if opt.Region != "" {
 		cfg.Region = opt.Region
 	}
+	cfg.RetryMaxAttempts = 8
+	cfg.RetryMode = aws.RetryModeAdaptive
 
 	ch := make(chan func(), opt.Concurrency)
 
@@ -71,12 +76,20 @@ func run(cmd *cobra.Command, args []string) {
 		}()
 	}
 
-	cli := lambda.NewFromConfig(cfg, func(options *lambda.Options) {
-		options.RetryMaxAttempts = 8
-		options.RetryMode = aws.RetryModeAdaptive
-	})
+	cli := lambda.NewFromConfig(cfg)
 
-	for fn := range listFunctions(ctx, cli, args[0]) {
+	var fs <-chan string
+	if opt.Stack != "" {
+		fs = listFunctionsByStack(ctx, cloudformation.NewFromConfig(cfg), opt.Stack)
+	} else {
+		fs = listFunctions(ctx, cli)
+	}
+
+	for fn := range fs {
+		if !strings.HasPrefix(fn, args[0]) {
+			continue
+		}
+
 		vers := make([]string, 0, opt.NumToKeep+1)
 
 		var wg sync.WaitGroup
@@ -108,7 +121,7 @@ func run(cmd *cobra.Command, args []string) {
 	close(ch)
 }
 
-func listFunctions(ctx context.Context, cli *lambda.Client, prefix string) <-chan string {
+func listFunctions(ctx context.Context, cli *lambda.Client) <-chan string {
 	ch := make(chan string)
 
 	go func() {
@@ -126,15 +139,49 @@ func listFunctions(ctx context.Context, cli *lambda.Client, prefix string) <-cha
 			}
 
 			for _, fc := range out.Functions {
-				if strings.HasPrefix(*fc.FunctionName, prefix) {
-					ch <- *fc.FunctionName
-				}
+				ch <- *fc.FunctionName
 			}
 
 			if out.NextMarker == nil {
 				break
 			}
 			marker = out.NextMarker
+		}
+	}()
+
+	return ch
+}
+
+func listFunctionsByStack(ctx context.Context, cli *cloudformation.Client, stack string) <-chan string {
+	ch := make(chan string)
+
+	go func() {
+		defer close(ch)
+
+		paginator := cloudformation.NewListStackResourcesPaginator(cli, &cloudformation.ListStackResourcesInput{
+			StackName: aws.String(stack),
+		})
+
+		for paginator.HasMorePages() {
+			page, err := paginator.NextPage(ctx)
+			if err != nil {
+				log.Fatalf("failed to list resources for stack %s: %v", stack, err)
+			}
+
+			for _, res := range page.StackResourceSummaries {
+				if res.PhysicalResourceId == nil {
+					continue
+				}
+
+				switch aws.ToString(res.ResourceType) {
+				case "AWS::Lambda::Function":
+					ch <- aws.ToString(res.PhysicalResourceId)
+				case "AWS::CloudFormation::Stack":
+					for fn := range listFunctionsByStack(ctx, cli, aws.ToString(res.PhysicalResourceId)) {
+						ch <- fn
+					}
+				}
+			}
 		}
 	}()
 

@@ -15,5 +15,11 @@ curl -L https://github.com/rxnew/lambda-clean/releases/latest/download/lambda-cl
 ## Quick Start
 
 ```shell
-env AWS_PROFILE=xxx lambda-clean -r us-east-1 my-function
+env AWS_PROFILE=xxx lambda-clean -r us-east-1 my-function-prefix
+```
+
+Targets all functions belonging to a specific CloudFormation stack:
+
+```shell
+env AWS_PROFILE=xxx lambda-clean -s my-stack -r us-east-1 ''
 ```
