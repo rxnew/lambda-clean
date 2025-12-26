@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -34,7 +35,7 @@ var opt struct {
 }
 
 var cmd = &cobra.Command{
-	Use:  "lambda-clean function-name-prefix",
+	Use:  "lambda-clean function-name",
 	Args: cobra.ExactArgs(1),
 	Run:  run,
 }
@@ -86,7 +87,7 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	for fn := range fs {
-		if !strings.HasPrefix(fn, args[0]) {
+		if ok, _ := filepath.Match(args[0], fn); !ok {
 			continue
 		}
 
